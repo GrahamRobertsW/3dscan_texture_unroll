@@ -78,12 +78,27 @@ def reorient_to_origin(obj, sample_size = 20000, sample_count = 20):
    #not done need to handle dirty dirty runtime
    return
 
+def find_phi(xy_coords):
+   phi = np.zeros(xy_coords.shape[0])
+   norms = find_norms(xy_coords)
+   norm_coords = xy_coords/np.sqrt(norms)
+   x = norm_coords[:,0]
+   y = norm_coords[:,1]
+   x_angles = np.arccos(x)
+   y_angles = np.arcsin(y)
+   for i in range(xy_coords.shape[0]):
+      if y_angles[i] > 0:
+         phi[i] = x_angles[i]
+      else:
+         phi[i] = -1 * x_angles[i]
+   return(phi)
+
 def shift_to_origin(bm):
    coords = find_coordinates(bm)
    minc = coords.min(axis=0)
    maxc = coords.max(axis=0)
    midc = (maxc+minc)/2.
-   bmesh.ops.translate(bm, verts = bm.verts, vec = -1*midc)
+   bmesh.ops.translate(bm, verts = bm.verts, vec = -1*midc[:3])
    return
 
 def find_norms(coords):
@@ -127,16 +142,62 @@ def activate_edit(name):
 # find_coordinates
 # find the coordinates
 # ARGS: "me" a mesh i.e., obj.data
-# Tested works
+# RETURN matrix of coordinates in the shape [x,z,y,phi,r]
 def find_coordinates(bm):
    verts = bm.verts
-   coords = np.zeros((len(verts),3))
+   coords = np.zeros((len(verts),5))
    for i in range(len(verts)):
       coords[i,0] = verts[i].co[0]
       coords[i,1] = verts[i].co[1]
       coords[i,2] = verts[i].co[2]
+      coords[i,3] = np.arctan2(verts[i].co[0],verts[i].co[2])
+      coords[i,4] = np.sqrt(verts[i].co[0]**2+verts[i].co[2]**2)
    return(coords)
- 
+
+#find_angle_between
+def find_angle_between(vec1, vec2):
+   v1 = vec1/np.linalg.norm(vec1)
+   v2 = vec2/np.linalg.norm(vec2)
+   return(np.arccos(np.clip(np.inner(v1,v2),-1,1)))
+
+#find_xy_intercepts
+# a bit of a misnomer
+# just finds point close to the xy-plane
+# namely points with a z-coordinate less than threshold
+#ARGS:
+#  coords: an array of coordinates [x,z,y] or [x,z,y,phi,r] work
+#  thresh: the threshold of z-values only ones within this range are returned
+#RETURN:
+#  close_coords: an array of the coordinates of points approximately lying on xy-plane
+def find_xy_intercepts(coords, thresh = 0.01):
+   close_inds = np.less(np.abs(coords[:,1]),thresh)
+   close_coords = coords[close_inds]
+   return(close_coords)
+
+#rough_align_to_z
+def rough_align_to_z(bm, num_points = 10000):
+   z_ax = np.array([0,1,0])
+   shift_to_origin(bm)
+   coords = find_coordinates(bm)
+   sample_coords = coords[np.random.choice(coords.shape[0],num_points,replace=False),:3]
+   best_line = find_best_line(sample_coords)
+   best_line = best_line/np.linalg.norm(best_line)
+   print(best_line)
+   angle = np.arccos(np.clip(np.inner(best_line,z_ax),-1,1))
+   perp_ax = np.cross(z_ax, best_line)
+   perp_ax[1] = perp_ax[2]
+   perp_ax[2] = 0
+   print(perp_ax)
+   bpy.ops.transform.rotate(value=-angle,axis=perp_ax)
+   return
+   
+def update_pointers(scene, name):
+   scene.update()
+   obj = scene.objects[name]
+   me = obj.data
+   bm = bmesh.from_edit_mesh(me)
+   return(obj, me, bm)
+
 # find_coords_and_uv
 # function returns array of coordinates and correesponding UV values
 # note only finds first uv vector
@@ -144,18 +205,19 @@ def find_coordinates(bm):
 # example online just averages vectors which opens up a pretty dirty opportunity for bugs
 # ARGS: "obj" the active object in edit mode
 #              This might be accessible from globally scoped context maybe should be argumentless
-def find_coords_and_UV(obj):
-   bm = bmesh.from_edit_mesh(object)
+def find_coords_and_UV(bm):
    uv_layer = bm.loops.layers.uv.active
    verts = bm.verts
-   data=np.zeros((len(verts),5))
+   data=np.zeros((len(verts),7))
    for i in range(len(verts)):
       v = verts[i]
       coord = v.co
       data[i,0] = coord[0]
       data[i,1] = coord[1]
       data[i,2] = coord[2]
-      data[i,4] = v.link_loops[0][uv_layer].uv[0]
-      data[i,5] = v.link_loops[0][uv_layer].uv[1]
+      data[i,3] = v.link_loops[0][uv_layer].uv[0]
+      data[i,4] = v.link_loops[0][uv_layer].uv[1]
+      data[i,5] = np.arctan2(coord[0], coord[2])
+      data[i,6] = np.sqrt(coord[0]**2+coord[2]**2)
    return(data)
       
